@@ -29,6 +29,12 @@ if 'progress' not in st.session_state:
     st.session_state.progress = 0
 if 'current_task' not in st.session_state:
     st.session_state.current_task = ""
+if 'start_time' not in st.session_state:
+    st.session_state.start_time = None
+if 'total_steps' not in st.session_state:
+    st.session_state.total_steps = 0
+if 'completed_steps' not in st.session_state:
+    st.session_state.completed_steps = 0
 
 # Title and description
 st.title("Fishing Industry Reddit Mention Monitor")
@@ -215,11 +221,38 @@ with tab2:
     if st.session_state.search_in_progress:
         st.subheader("Search Progress")
         progress_bar = st.progress(0)
-        status_text = st.empty()
+        status_container = st.container()
         
         # Update progress display
         progress_bar.progress(st.session_state.progress)
-        status_text.text(st.session_state.current_task)
+        
+        # Calculate time metrics if available
+        elapsed_time = None
+        remaining_time = None
+        total_steps_completed = 0
+        
+        if st.session_state.start_time is not None:
+            elapsed_time = time.time() - st.session_state.start_time
+            
+            if st.session_state.progress > 0:
+                total_time_estimate = elapsed_time / st.session_state.progress
+                remaining_time = total_time_estimate - elapsed_time
+        
+        with status_container:
+            st.markdown(f"**Current task:** {st.session_state.current_task}")
+            
+            # Only show these metrics if we have timing data
+            if elapsed_time is not None:
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown(f"**Elapsed time:** {time.strftime('%H:%M:%S', time.gmtime(elapsed_time))}")
+                
+                with col2:
+                    if remaining_time is not None and remaining_time > 0:
+                        st.markdown(f"**Estimated time left:** {time.strftime('%H:%M:%S', time.gmtime(remaining_time))}")
+            
+            if st.session_state.completed_steps > 0 and st.session_state.total_steps > 0:
+                st.markdown(f"**Progress:** {st.session_state.completed_steps} of {st.session_state.total_steps} steps completed")
     
     # Handle search button click
     if search_button:
@@ -260,14 +293,29 @@ with tab2:
                         owner_col=st.session_state.vessels_owner_col_value
                     )
                 
-                # Set progress display
+                # Set progress display and initialize timing metrics
                 st.session_state.progress = 0
                 st.session_state.current_task = "Connecting to Reddit API..."
+                st.session_state.start_time = time.time()
+                
+                # Calculate total steps for progress tracking
+                total_subreddits = len(subreddits)
+                total_plant_keywords = len(plants_keywords) if plants_keywords else 0
+                total_vessel_keywords = len(vessels_keywords) if vessels_keywords else 0
+                
+                # Total steps = (subreddits × plant keywords) + (subreddits × vessel keywords)
+                st.session_state.total_steps = (total_subreddits * total_plant_keywords) + (total_subreddits * total_vessel_keywords)
+                st.session_state.completed_steps = 0
                 
                 # Progress updates for display
                 def progress_update_callback(progress, task_description):
                     st.session_state.progress = progress
                     st.session_state.current_task = task_description
+                    
+                    # Update step counter based on progress percentage
+                    if st.session_state.total_steps > 0:
+                        st.session_state.completed_steps = int(progress * st.session_state.total_steps)
+                    
                     time.sleep(0.1)  # Small delay to allow UI to update
                 
                 # Perform search
@@ -310,13 +358,26 @@ with tab2:
                     
                     # Automatically switch to results tab
                     time.sleep(1)
+                    # Reset search-related session state
                     st.session_state.search_in_progress = False
+                    st.session_state.progress = 0
+                    st.session_state.current_task = ""
+                    st.session_state.start_time = None
+                    st.session_state.total_steps = 0
+                    st.session_state.completed_steps = 0
+                    
                     # Switch to Results tab
                     st.rerun()
                 
                 except Exception as e:
                     st.error(f"Error during Reddit search: {str(e)}")
+                    # Reset search-related session state
                     st.session_state.search_in_progress = False
+                    st.session_state.progress = 0
+                    st.session_state.current_task = ""
+                    st.session_state.start_time = None
+                    st.session_state.total_steps = 0
+                    st.session_state.completed_steps = 0
 
 # Results Tab
 with tab3:
