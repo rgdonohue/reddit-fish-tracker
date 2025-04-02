@@ -61,9 +61,10 @@ class RedditService:
                     progress = current_step / total_progress_steps
                     
                     if progress_callback:
+                        task_description = f"Searching r/{subreddit_name} for '{keyword}' ({entity_type}) - Step {current_step} of {total_progress_steps}"
                         progress_callback(
                             progress, 
-                            f"Searching r/{subreddit_name} for '{keyword}' ({entity_type})"
+                            task_description
                         )
                     
                     # Search in post titles and text
@@ -104,9 +105,10 @@ class RedditService:
                     # Search comments if enabled
                     if include_comments:
                         if progress_callback:
+                            task_description = f"Searching comments in r/{subreddit_name} for '{keyword}' ({entity_type}) - Step {current_step} of {total_progress_steps}"
                             progress_callback(
                                 progress, 
-                                f"Searching comments in r/{subreddit_name} for '{keyword}' ({entity_type})"
+                                task_description
                             )
                         
                         # Get all submissions again for comment search
@@ -149,7 +151,7 @@ class RedditService:
         
         # Final progress update
         if progress_callback:
-            progress_callback(1.0, f"Completed search for {entity_type} mentions")
+            progress_callback(1.0, f"Completed search for {entity_type} mentions - All {total_progress_steps} steps finished")
         
         return results
     
