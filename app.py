@@ -384,10 +384,11 @@ with tab2:
             
             # Set search flag and trigger rerun
             st.session_state.do_search = True
+            st.session_state.search_in_progress = True  # Set search in progress flag
             st.rerun()
     
     # Execute search if flag is set
-    if st.session_state.do_search:
+    if st.session_state.do_search and st.session_state.search_in_progress:
         st.session_state.do_search = False  # Reset flag
         
         with st.spinner("Processing data and searching Reddit..."):
