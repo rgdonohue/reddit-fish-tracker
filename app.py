@@ -12,6 +12,9 @@ from web_scraper import get_website_text_content
 # Load environment variables
 load_dotenv()
 
+# Initialize services
+data_processor = DataProcessor()
+
 # Page configuration
 st.set_page_config(
     page_title="Fishing Industry Reddit Monitor",
@@ -25,9 +28,9 @@ if 'plants_data' not in st.session_state:
 if 'vessels_data' not in st.session_state:
     st.session_state.vessels_data = None
 if 'plants_results' not in st.session_state:
-    st.session_state.plants_results = None
+    st.session_state.plants_results = []
 if 'vessels_results' not in st.session_state:
-    st.session_state.vessels_results = None
+    st.session_state.vessels_results = []
 if 'search_in_progress' not in st.session_state:
     st.session_state.search_in_progress = False
 if 'progress' not in st.session_state:
@@ -40,6 +43,8 @@ if 'total_steps' not in st.session_state:
     st.session_state.total_steps = 0
 if 'completed_steps' not in st.session_state:
     st.session_state.completed_steps = 0
+if 'search_log' not in st.session_state:
+    st.session_state.search_log = []
 if 'reddit_client_id' not in st.session_state:
     st.session_state.reddit_client_id = os.getenv('REDDIT_CLIENT_ID', '')
 if 'reddit_client_secret' not in st.session_state:
@@ -54,6 +59,27 @@ if 'time_filter' not in st.session_state:
     st.session_state.time_filter = "month"
 if 'test_mode' not in st.session_state:
     st.session_state.test_mode = False
+if 'default_files_loaded' not in st.session_state:
+    st.session_state.default_files_loaded = False
+
+# Load default CSV files if not already loaded
+if not st.session_state.default_files_loaded:
+    try:
+        # Load plants data
+        plants_df = pd.read_csv("data/Plants.csv")
+        st.session_state.plants_data = plants_df
+        st.session_state.plants_name_col_value = "Company name"
+        st.session_state.plants_owner_col_value = "Company name"  # Using same column for both since only one is specified
+        
+        # Load vessels data
+        vessels_df = pd.read_csv("data/Ships.csv")
+        st.session_state.vessels_data = vessels_df
+        st.session_state.vessels_name_col_value = "Vessel Name"
+        st.session_state.vessels_owner_col_value = "Owner Name"
+        
+        st.session_state.default_files_loaded = True
+    except Exception as e:
+        st.error(f"Error loading default CSV files: {str(e)}")
 
 # Title and description
 st.title("Fishing Industry Reddit Mention Monitor")
@@ -76,12 +102,24 @@ with tab1:
     
     with col1:
         st.subheader("Fish Processing Plants")
-        plants_file = st.file_uploader("Upload Plants CSV", type="csv", key="plants_uploader")
+        if st.session_state.plants_data is not None:
+            st.success(f"Plants CSV loaded: {st.session_state.plants_data.shape[0]} rows")
+            st.info("Using default Plants.csv file")
+            
+            # Display preview
+            st.subheader("Preview")
+            st.dataframe(st.session_state.plants_data.head())
+            
+            # Display columns
+            st.subheader("Available Columns")
+            st.write(", ".join(st.session_state.plants_data.columns.tolist()))
         
+        # Allow uploading a different file
+        plants_file = st.file_uploader("Upload Different Plants CSV", type="csv", key="plants_uploader")
         if plants_file is not None:
             try:
                 plants_df = pd.read_csv(plants_file)
-                st.success(f"Plants CSV loaded successfully: {plants_df.shape[0]} rows")
+                st.success(f"New Plants CSV loaded successfully: {plants_df.shape[0]} rows")
                 st.session_state.plants_data = plants_df
                 
                 # Display preview
@@ -93,16 +131,27 @@ with tab1:
                 st.write(", ".join(plants_df.columns.tolist()))
             except Exception as e:
                 st.error(f"Error loading plants CSV: {str(e)}")
-                st.session_state.plants_data = None
     
     with col2:
         st.subheader("Commercial Fishing Vessels")
-        vessels_file = st.file_uploader("Upload Vessels CSV", type="csv", key="vessels_uploader")
+        if st.session_state.vessels_data is not None:
+            st.success(f"Vessels CSV loaded: {st.session_state.vessels_data.shape[0]} rows")
+            st.info("Using default Ships.csv file")
+            
+            # Display preview
+            st.subheader("Preview")
+            st.dataframe(st.session_state.vessels_data.head())
+            
+            # Display columns
+            st.subheader("Available Columns")
+            st.write(", ".join(st.session_state.vessels_data.columns.tolist()))
         
+        # Allow uploading a different file
+        vessels_file = st.file_uploader("Upload Different Vessels CSV", type="csv", key="vessels_uploader")
         if vessels_file is not None:
             try:
                 vessels_df = pd.read_csv(vessels_file)
-                st.success(f"Vessels CSV loaded successfully: {vessels_df.shape[0]} rows")
+                st.success(f"New Vessels CSV loaded successfully: {vessels_df.shape[0]} rows")
                 st.session_state.vessels_data = vessels_df
                 
                 # Display preview
@@ -114,7 +163,6 @@ with tab1:
                 st.write(", ".join(vessels_df.columns.tolist()))
             except Exception as e:
                 st.error(f"Error loading vessels CSV: {str(e)}")
-                st.session_state.vessels_data = None
     
     # Configuration section
     st.header("Configuration")
@@ -196,9 +244,42 @@ with tab2:
     
     # Test mode toggle
     st.subheader("Test Mode")
-    test_mode = st.checkbox("Enable test mode (limit to 5 keywords each)", value=False)
+    test_mode = st.checkbox("Enable test mode (select specific keywords)", value=False)
+    
     if test_mode:
-        st.info("Test mode will limit the search to 5 keywords each for plants and vessels")
+        st.info("Test mode allows you to select specific keywords to search for")
+        
+        # Plants keyword selection
+        if st.session_state.plants_data is not None:
+            plants_keywords = data_processor.extract_keywords(
+                st.session_state.plants_data,
+                name_col=st.session_state.plants_name_col_value,
+                owner_col=st.session_state.plants_owner_col_value
+            )
+            st.subheader("Select Plant Keywords")
+            selected_plant_keywords = st.multiselect(
+                "Choose plant keywords to search for",
+                options=plants_keywords,
+                default=plants_keywords[:5] if len(plants_keywords) > 5 else plants_keywords,
+                help="Select specific plant keywords to search for. In test mode, only these keywords will be used."
+            )
+            st.info(f"Selected {len(selected_plant_keywords)} plant keywords")
+        
+        # Vessels keyword selection
+        if st.session_state.vessels_data is not None:
+            vessels_keywords = data_processor.extract_keywords(
+                st.session_state.vessels_data,
+                name_col=st.session_state.vessels_name_col_value,
+                owner_col=st.session_state.vessels_owner_col_value
+            )
+            st.subheader("Select Vessel Keywords")
+            selected_vessel_keywords = st.multiselect(
+                "Choose vessel keywords to search for",
+                options=vessels_keywords,
+                default=vessels_keywords[:5] if len(vessels_keywords) > 5 else vessels_keywords,
+                help="Select specific vessel keywords to search for. In test mode, only these keywords will be used."
+            )
+            st.info(f"Selected {len(selected_vessel_keywords)} vessel keywords")
     
     # Reddit API credentials
     st.subheader("Reddit API Credentials")
@@ -331,29 +412,32 @@ with tab2:
             vessels_keywords = []
             
             if st.session_state.plants_data is not None:
-                plants_keywords = data_processor.extract_keywords(
-                    st.session_state.plants_data,
-                    name_col=st.session_state.plants_name_col_value,
-                    owner_col=st.session_state.plants_owner_col_value
-                )
-                if st.session_state.test_mode:
-                    plants_keywords = plants_keywords[:5]
-                    st.info(f"Test mode: Using first 5 plant keywords: {', '.join(plants_keywords)}")
+                if test_mode:
+                    plants_keywords = selected_plant_keywords
+                    st.info(f"Test mode: Using selected plant keywords: {', '.join(plants_keywords)}")
+                else:
+                    plants_keywords = data_processor.extract_keywords(
+                        st.session_state.plants_data,
+                        name_col=st.session_state.plants_name_col_value,
+                        owner_col=st.session_state.plants_owner_col_value
+                    )
             
             if st.session_state.vessels_data is not None:
-                vessels_keywords = data_processor.extract_keywords(
-                    st.session_state.vessels_data,
-                    name_col=st.session_state.vessels_name_col_value,
-                    owner_col=st.session_state.vessels_owner_col_value
-                )
-                if st.session_state.test_mode:
-                    vessels_keywords = vessels_keywords[:5]
-                    st.info(f"Test mode: Using first 5 vessel keywords: {', '.join(vessels_keywords)}")
+                if test_mode:
+                    vessels_keywords = selected_vessel_keywords
+                    st.info(f"Test mode: Using selected vessel keywords: {', '.join(vessels_keywords)}")
+                else:
+                    vessels_keywords = data_processor.extract_keywords(
+                        st.session_state.vessels_data,
+                        name_col=st.session_state.vessels_name_col_value,
+                        owner_col=st.session_state.vessels_owner_col_value
+                    )
             
             # Set progress display and initialize timing metrics
             st.session_state.progress = 0
             st.session_state.current_task = "Connecting to Reddit API..."
             st.session_state.start_time = time.time()
+            st.session_state.search_log = []  # Reset search log
             
             # Calculate total steps for progress tracking
             total_subreddits = len(st.session_state.subreddits)
@@ -373,45 +457,83 @@ with tab2:
                 if st.session_state.total_steps > 0:
                     st.session_state.completed_steps = int(progress * st.session_state.total_steps)
                 
+                # Add to search log
+                timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                st.session_state.search_log.append(f"[{timestamp}] {task_description}")
+                
                 time.sleep(0.1)  # Small delay to allow UI to update
             
             # Perform search
-            plants_results = []
-            vessels_results = []
-            
             try:
                 # Search for plants mentions
                 if plants_keywords:
-                    plants_results = reddit_service.search_reddit(
-                        keywords=plants_keywords,
-                        subreddits=st.session_state.subreddits,
-                        limit=st.session_state.search_limit,
-                        time_filter=st.session_state.time_filter,
-                        include_comments=st.session_state.include_comments,
-                        comments_limit=st.session_state.comments_limit,
-                        entity_type="plant",
-                        progress_callback=progress_update_callback
-                    )
+                    for keyword in plants_keywords:
+                        for subreddit in st.session_state.subreddits:
+                            current_task = f"Searching r/{subreddit} for plant keyword: {keyword}"
+                            progress_update_callback(
+                                st.session_state.progress,
+                                current_task
+                            )
+                            
+                            subreddit_results = reddit_service._make_api_request(
+                                subreddit=subreddit,
+                                keyword=keyword,
+                                limit=st.session_state.search_limit,
+                                time_filter=st.session_state.time_filter,
+                                include_comments=st.session_state.include_comments,
+                                comments_limit=st.session_state.comments_limit
+                            )
+                            
+                            # Add results to session state immediately
+                            for result in subreddit_results:
+                                result['entity_type'] = 'plant'
+                                st.session_state.plants_results.append(result)
+                            
+                            # Update progress
+                            st.session_state.completed_steps += 1
+                            if st.session_state.total_steps > 0:
+                                st.session_state.progress = st.session_state.completed_steps / st.session_state.total_steps
                     
                 # Search for vessels mentions
                 if vessels_keywords:
-                    vessels_results = reddit_service.search_reddit(
-                        keywords=vessels_keywords,
-                        subreddits=st.session_state.subreddits,
-                        limit=st.session_state.search_limit,
-                        time_filter=st.session_state.time_filter,
-                        include_comments=st.session_state.include_comments,
-                        comments_limit=st.session_state.comments_limit,
-                        entity_type="vessel",
-                        progress_callback=progress_update_callback
-                    )
+                    for keyword in vessels_keywords:
+                        for subreddit in st.session_state.subreddits:
+                            current_task = f"Searching r/{subreddit} for vessel keyword: {keyword}"
+                            progress_update_callback(
+                                st.session_state.progress,
+                                current_task
+                            )
+                            
+                            subreddit_results = reddit_service._make_api_request(
+                                subreddit=subreddit,
+                                keyword=keyword,
+                                limit=st.session_state.search_limit,
+                                time_filter=st.session_state.time_filter,
+                                include_comments=st.session_state.include_comments,
+                                comments_limit=st.session_state.comments_limit
+                            )
+                            
+                            # Add results to session state immediately
+                            for result in subreddit_results:
+                                result['entity_type'] = 'vessel'
+                                st.session_state.vessels_results.append(result)
+                            
+                            # Update progress
+                            st.session_state.completed_steps += 1
+                            if st.session_state.total_steps > 0:
+                                st.session_state.progress = st.session_state.completed_steps / st.session_state.total_steps
                 
-                # Store results in session state
-                st.session_state.plants_results = plants_results
-                st.session_state.vessels_results = vessels_results
+                # Display final results count
+                st.success(f"Search completed! Found {len(st.session_state.plants_results)} plant mentions and {len(st.session_state.vessels_results)} vessel mentions.")
                 
-                # Display results count
-                st.success(f"Search completed! Found {len(plants_results)} plant mentions and {len(vessels_results)} vessel mentions.")
+                # Add download button for search log
+                if st.download_button(
+                    label="Download Search Log",
+                    data="\n".join(st.session_state.search_log),
+                    file_name=f"reddit_search_log_{get_timestamp()}.txt",
+                    mime="text/plain"
+                ):
+                    st.success("Search log downloaded")
                 
                 # Reset search-related session state
                 st.session_state.search_in_progress = False
@@ -439,8 +561,21 @@ with tab2:
 with tab3:
     st.header("Search Results")
     
+    # Show current search status if search is in progress
+    if st.session_state.search_in_progress:
+        st.subheader("Search in Progress")
+        st.progress(st.session_state.progress)
+        st.markdown(f"**Current task:** {st.session_state.current_task}")
+        
+        if st.session_state.start_time is not None:
+            elapsed_time = time.time() - st.session_state.start_time
+            st.markdown(f"**Elapsed time:** {time.strftime('%H:%M:%S', time.gmtime(elapsed_time))}")
+        
+        if st.session_state.completed_steps > 0 and st.session_state.total_steps > 0:
+            st.markdown(f"**Progress:** {st.session_state.completed_steps} of {st.session_state.total_steps} steps completed")
+    
     # Check if results exist
-    if st.session_state.plants_results is None and st.session_state.vessels_results is None:
+    if not st.session_state.plants_results and not st.session_state.vessels_results:
         st.info("No search results yet. Please go to the Reddit Search tab to start a search.")
     else:
         # Results tabs for plants and vessels
