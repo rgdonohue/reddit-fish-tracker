@@ -3,17 +3,17 @@ import pandas as pd
 import datetime
 import os
 import time
-from dotenv import load_dotenv
+# from dotenv import load_dotenv
 from data_processor import DataProcessor
 from reddit_service import RedditService
 from utils import get_timestamp, display_progress, save_to_csv
 from web_scraper import get_website_text_content
 
 # Load environment variables
-try:
-    load_dotenv()
-except:
-    pass  # Ignore if .env file is not found, we'll use streamlit secrets instead
+# try:
+#     load_dotenv()
+# except:
+#     pass  # Ignore if .env file is not found, we'll use streamlit secrets instead
 
 # Initialize services
 data_processor = DataProcessor()
