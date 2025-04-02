@@ -4,6 +4,7 @@ import datetime
 import pandas as pd
 import re
 from typing import List, Dict, Any, Callable, Optional
+from prawcore.exceptions import ResponseException, RequestException
 
 class RedditService:
     """Service for interacting with Reddit API to search for mentions"""
@@ -15,7 +16,75 @@ class RedditService:
             client_secret=client_secret,
             user_agent=user_agent
         )
-        self.rate_limit_delay = 2  # Seconds between API calls to avoid rate limiting
+        self.rate_limit_delay = 2  # Base delay between API calls
+        self.max_retries = 3  # Maximum number of retries for rate limits
+        self.base_backoff = 5  # Base backoff time in seconds
+    
+    def _handle_rate_limit(self, attempt: int) -> None:
+        """Handle rate limiting with exponential backoff"""
+        backoff_time = self.base_backoff * (2 ** (attempt - 1))  # Exponential backoff
+        time.sleep(backoff_time)
+    
+    def _make_api_request(self, subreddit: str, keyword: str, limit: int, time_filter: str, 
+                         include_comments: bool, comments_limit: int, attempt: int = 1) -> List[Dict[Any, Any]]:
+        """Make API request with rate limit handling"""
+        try:
+            subreddit_instance = self.reddit.subreddit(subreddit)
+            search_results = []
+            
+            # Search in posts
+            for submission in subreddit_instance.search(keyword, limit=limit, time_filter=time_filter):
+                # Check post title and content
+                if self._check_keyword_match(submission.title, keyword):
+                    search_results.append({
+                        'id': submission.id,
+                        'title': submission.title,
+                        'author': str(submission.author),
+                        'datetime': datetime.datetime.fromtimestamp(submission.created_utc).isoformat(),
+                        'permalink': submission.permalink,
+                        'snippet': self._get_context_snippet(submission.title, keyword),
+                        'source': 'post',
+                        'subreddit': subreddit,
+                        'keyword': keyword
+                    })
+                
+                # Check comments if enabled
+                if include_comments:
+                    try:
+                        submission.comments.replace_more(limit=0)  # Load all comments
+                        for comment in submission.comments.list()[:comments_limit]:
+                            if self._check_keyword_match(comment.body, keyword):
+                                search_results.append({
+                                    'id': comment.id,
+                                    'title': submission.title,
+                                    'author': str(comment.author),
+                                    'datetime': datetime.datetime.fromtimestamp(comment.created_utc).isoformat(),
+                                    'permalink': submission.permalink,
+                                    'snippet': self._get_context_snippet(comment.body, keyword),
+                                    'source': 'comment',
+                                    'subreddit': subreddit,
+                                    'keyword': keyword
+                                })
+                    except Exception as e:
+                        print(f"Error processing comments for submission {submission.id}: {str(e)}")
+                        continue
+                
+                time.sleep(self.rate_limit_delay)  # Delay between submissions
+            
+            return search_results
+            
+        except ResponseException as e:
+            if e.response.status_code == 429 and attempt < self.max_retries:
+                print(f"Rate limit hit for subreddit {subreddit}, attempt {attempt}. Backing off...")
+                self._handle_rate_limit(attempt)
+                return self._make_api_request(subreddit, keyword, limit, time_filter, 
+                                           include_comments, comments_limit, attempt + 1)
+            else:
+                print(f"Error searching subreddit {subreddit}: {str(e)}")
+                return []
+        except Exception as e:
+            print(f"Error searching subreddit {subreddit}: {str(e)}")
+            return []
     
     def search_reddit(
         self, 
@@ -51,147 +120,55 @@ class RedditService:
         if progress_callback:
             progress_callback(0.0, f"Starting Reddit search for {entity_type} mentions")
         
-        # Search each subreddit for each keyword
-        for subreddit_name in subreddits:
-            try:
-                subreddit = self.reddit.subreddit(subreddit_name)
-                
-                for keyword in keywords:
+        for subreddit in subreddits:
+            for keyword in keywords:
+                if progress_callback:
                     current_step += 1
                     progress = current_step / total_progress_steps
-                    
-                    if progress_callback:
-                        task_description = f"Searching r/{subreddit_name} for '{keyword}' ({entity_type}) - Step {current_step} of {total_progress_steps}"
-                        progress_callback(
-                            progress, 
-                            task_description
-                        )
-                    
-                    # Search in post titles and text
-                    search_query = keyword
-                    submissions = subreddit.search(search_query, limit=limit, time_filter=time_filter)
-                    
-                    # Process each submission
-                    for submission in submissions:
-                        # Check if keyword is in title or selftext
-                        title_match = self._check_keyword_match(submission.title, keyword)
-                        text_match = False
-                        
-                        if hasattr(submission, 'selftext') and submission.selftext:
-                            text_match = self._check_keyword_match(submission.selftext, keyword)
-                        
-                        if title_match or text_match:
-                            # Add submission to results
-                            result = {
-                                'id': submission.id,
-                                'title': submission.title,
-                                'author': str(submission.author),
-                                'datetime': datetime.datetime.fromtimestamp(submission.created_utc).strftime('%Y-%m-%d %H:%M:%S'),
-                                'subreddit': subreddit_name,
-                                'permalink': submission.permalink,
-                                'source': 'submission',
-                                'keyword': keyword,
-                                'entity_type': entity_type
-                            }
-                            
-                            # Get snippet from title or selftext
-                            if title_match:
-                                result['snippet'] = self._get_context_snippet(submission.title, keyword)
-                            else:
-                                result['snippet'] = self._get_context_snippet(submission.selftext, keyword)
-                            
-                            results.append(result)
-                    
-                    # Search comments if enabled
-                    if include_comments:
-                        if progress_callback:
-                            task_description = f"Searching comments in r/{subreddit_name} for '{keyword}' ({entity_type}) - Step {current_step} of {total_progress_steps}"
-                            progress_callback(
-                                progress, 
-                                task_description
-                            )
-                        
-                        # Get all submissions again for comment search
-                        submissions = subreddit.search(search_query, limit=limit, time_filter=time_filter)
-                        
-                        for submission in submissions:
-                            # Replace with actual submission ID
-                            submission.comments.replace_more(limit=0)  # Don't fetch MoreComments
-                            
-                            # Get all comments up to the limit
-                            comments = list(submission.comments.list())[:comments_limit]
-                            
-                            for comment in comments:
-                                if hasattr(comment, 'body') and comment.body:
-                                    comment_match = self._check_keyword_match(comment.body, keyword)
-                                    
-                                    if comment_match:
-                                        result = {
-                                            'id': comment.id,
-                                            'title': submission.title + f" (Comment by u/{comment.author})",
-                                            'author': str(comment.author),
-                                            'datetime': datetime.datetime.fromtimestamp(comment.created_utc).strftime('%Y-%m-%d %H:%M:%S'),
-                                            'subreddit': subreddit_name,
-                                            'permalink': comment.permalink,
-                                            'source': 'comment',
-                                            'snippet': self._get_context_snippet(comment.body, keyword),
-                                            'keyword': keyword,
-                                            'entity_type': entity_type
-                                        }
-                                        
-                                        results.append(result)
-                    
-                    # Respect Reddit's rate limits
-                    time.sleep(self.rate_limit_delay)
-            
-            except Exception as e:
-                print(f"Error searching subreddit {subreddit_name}: {str(e)}")
-                # Continue with other subreddits
-                continue
-        
-        # Final progress update
-        if progress_callback:
-            progress_callback(1.0, f"Completed search for {entity_type} mentions - All {total_progress_steps} steps finished")
+                    progress_callback(progress, f"Searching r/{subreddit} for '{keyword}'")
+                
+                # Make API request with rate limit handling
+                subreddit_results = self._make_api_request(
+                    subreddit=subreddit,
+                    keyword=keyword,
+                    limit=limit,
+                    time_filter=time_filter,
+                    include_comments=include_comments,
+                    comments_limit=comments_limit
+                )
+                
+                results.extend(subreddit_results)
+                time.sleep(self.rate_limit_delay)  # Delay between keywords
         
         return results
-    
+
     def _check_keyword_match(self, text: str, keyword: str) -> bool:
-        """Check if keyword appears in text using regex word boundaries"""
-        if not text or not keyword:
+        """Check if keyword appears in text"""
+        if not isinstance(text, str):
             return False
-            
-        # Create regex pattern with word boundaries
-        pattern = r'\b' + re.escape(keyword) + r'\b'
-        match = re.search(pattern, text, re.IGNORECASE)
-        return match is not None
-    
+        return keyword.lower() in text.lower()
+
     def _get_context_snippet(self, text: str, keyword: str, context_chars: int = 100) -> str:
-        """Extract a snippet of text containing the keyword with surrounding context"""
-        if not text:
+        """Get a snippet of text around the keyword"""
+        if not isinstance(text, str):
             return ""
             
-        try:
-            # Find keyword position (case insensitive)
-            keyword_pos = text.lower().find(keyword.lower())
+        text = text.lower()
+        keyword = keyword.lower()
+        
+        # Find keyword position
+        pos = text.find(keyword)
+        if pos == -1:
+            return text[:context_chars] + "..." if len(text) > context_chars else text
             
-            if keyword_pos == -1:
-                return text[:200] + "..."  # Return start of text if keyword not found
+        # Get context around keyword
+        start = max(0, pos - context_chars // 2)
+        end = min(len(text), pos + len(keyword) + context_chars // 2)
+        
+        snippet = text[start:end]
+        if start > 0:
+            snippet = "..." + snippet
+        if end < len(text):
+            snippet = snippet + "..."
             
-            # Calculate snippet bounds
-            start = max(0, keyword_pos - context_chars)
-            end = min(len(text), keyword_pos + len(keyword) + context_chars)
-            
-            # Extract snippet
-            snippet = text[start:end].strip()
-            
-            # Add ellipsis if truncated
-            if start > 0:
-                snippet = "..." + snippet
-            if end < len(text):
-                snippet = snippet + "..."
-                
-            return snippet
-            
-        except Exception as e:
-            print(f"Error creating snippet: {str(e)}")
-            return text[:200] + "..."  # Fallback to first 200 chars
+        return snippet

@@ -3,10 +3,14 @@ import pandas as pd
 import datetime
 import os
 import time
+from dotenv import load_dotenv
 from data_processor import DataProcessor
 from reddit_service import RedditService
 from utils import get_timestamp, display_progress, save_to_csv
 from web_scraper import get_website_text_content
+
+# Load environment variables
+load_dotenv()
 
 # Page configuration
 st.set_page_config(
@@ -37,21 +41,19 @@ if 'total_steps' not in st.session_state:
 if 'completed_steps' not in st.session_state:
     st.session_state.completed_steps = 0
 if 'reddit_client_id' not in st.session_state:
-    st.session_state.reddit_client_id = ""
+    st.session_state.reddit_client_id = os.getenv('REDDIT_CLIENT_ID', '')
 if 'reddit_client_secret' not in st.session_state:
-    st.session_state.reddit_client_secret = ""
+    st.session_state.reddit_client_secret = os.getenv('REDDIT_CLIENT_SECRET', '')
 if 'reddit_user_agent' not in st.session_state:
-    st.session_state.reddit_user_agent = ""
+    st.session_state.reddit_user_agent = os.getenv('REDDIT_USER_AGENT', '')
 if 'subreddits' not in st.session_state:
     st.session_state.subreddits = []
 if 'search_limit' not in st.session_state:
     st.session_state.search_limit = 100
 if 'time_filter' not in st.session_state:
     st.session_state.time_filter = "month"
-if 'include_comments' not in st.session_state:
-    st.session_state.include_comments = True
-if 'comments_limit' not in st.session_state:
-    st.session_state.comments_limit = 100
+if 'test_mode' not in st.session_state:
+    st.session_state.test_mode = False
 
 # Title and description
 st.title("Fishing Industry Reddit Mention Monitor")
@@ -192,12 +194,18 @@ with tab1:
 with tab2:
     st.header("Reddit Search Configuration")
     
+    # Test mode toggle
+    st.subheader("Test Mode")
+    test_mode = st.checkbox("Enable test mode (limit to 5 keywords each)", value=False)
+    if test_mode:
+        st.info("Test mode will limit the search to 5 keywords each for plants and vessels")
+    
     # Reddit API credentials
     st.subheader("Reddit API Credentials")
     
-    reddit_client_id = st.text_input("Client ID", value=os.getenv("REDDIT_CLIENT_ID", ""), type="password")
-    reddit_client_secret = st.text_input("Client Secret", value=os.getenv("REDDIT_CLIENT_SECRET", ""), type="password")
-    reddit_user_agent = st.text_input("User Agent", value=os.getenv("REDDIT_USER_AGENT", f"FishingMentionTracker/1.0 (by u/fishingmonitor)"))
+    reddit_client_id = st.text_input("Client ID", value=st.session_state.reddit_client_id, type="password")
+    reddit_client_secret = st.text_input("Client Secret", value=st.session_state.reddit_client_secret, type="password")
+    reddit_user_agent = st.text_input("User Agent", value=st.session_state.reddit_user_agent)
     
     # Subreddit selection
     st.subheader("Subreddits to Search")
@@ -291,9 +299,9 @@ with tab2:
             st.session_state.time_filter = time_filter
             st.session_state.include_comments = include_comments
             st.session_state.comments_limit = comments_limit
+            st.session_state.test_mode = test_mode
             
             # Set search flag and trigger rerun
-            st.session_state.search_in_progress = True
             st.session_state.do_search = True
             st.rerun()
     
@@ -328,6 +336,9 @@ with tab2:
                     name_col=st.session_state.plants_name_col_value,
                     owner_col=st.session_state.plants_owner_col_value
                 )
+                if st.session_state.test_mode:
+                    plants_keywords = plants_keywords[:5]
+                    st.info(f"Test mode: Using first 5 plant keywords: {', '.join(plants_keywords)}")
             
             if st.session_state.vessels_data is not None:
                 vessels_keywords = data_processor.extract_keywords(
@@ -335,6 +346,9 @@ with tab2:
                     name_col=st.session_state.vessels_name_col_value,
                     owner_col=st.session_state.vessels_owner_col_value
                 )
+                if st.session_state.test_mode:
+                    vessels_keywords = vessels_keywords[:5]
+                    st.info(f"Test mode: Using first 5 vessel keywords: {', '.join(vessels_keywords)}")
             
             # Set progress display and initialize timing metrics
             st.session_state.progress = 0
