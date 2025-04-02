@@ -104,23 +104,30 @@ with tab1:
             st.subheader("Select Keyword Columns")
             st.info("Select columns that contain names or identifiers to search for on Reddit")
             
-            plants_name_col = st.selectbox(
+            # Initialize session state values if not present
+            if 'plants_name_col_value' not in st.session_state:
+                st.session_state.plants_name_col_value = "name" if "name" in columns else columns[0]
+            if 'plants_owner_col_value' not in st.session_state:
+                st.session_state.plants_owner_col_value = "owner" if "owner" in columns else columns[0]
+            
+            # Use selectbox widgets (the widget itself updates session_state.plants_name_col)
+            st.selectbox(
                 "Plant Name Column", 
                 options=columns,
-                index=columns.index("name") if "name" in columns else 0,
+                index=columns.index(st.session_state.plants_name_col_value) if st.session_state.plants_name_col_value in columns else 0,
                 key="plants_name_col"
             )
             
-            plants_owner_col = st.selectbox(
+            st.selectbox(
                 "Plant Owner Column", 
                 options=columns,
-                index=columns.index("owner") if "owner" in columns else 0,
+                index=columns.index(st.session_state.plants_owner_col_value) if st.session_state.plants_owner_col_value in columns else 0,
                 key="plants_owner_col"
             )
             
-            # Save selections to session state
-            st.session_state.plants_name_col = plants_name_col
-            st.session_state.plants_owner_col = plants_owner_col
+            # Update our values from the widget state
+            st.session_state.plants_name_col_value = st.session_state.plants_name_col
+            st.session_state.plants_owner_col_value = st.session_state.plants_owner_col
         else:
             st.info("Please upload plants CSV data first")
     
@@ -131,23 +138,30 @@ with tab1:
             st.subheader("Select Keyword Columns")
             st.info("Select columns that contain names or identifiers to search for on Reddit")
             
-            vessels_name_col = st.selectbox(
+            # Initialize session state values if not present
+            if 'vessels_name_col_value' not in st.session_state:
+                st.session_state.vessels_name_col_value = "name" if "name" in columns else columns[0]
+            if 'vessels_owner_col_value' not in st.session_state:
+                st.session_state.vessels_owner_col_value = "owner" if "owner" in columns else columns[0]
+            
+            # Use selectbox widgets (the widget itself updates session_state.vessels_name_col)
+            st.selectbox(
                 "Vessel Name Column", 
                 options=columns,
-                index=columns.index("name") if "name" in columns else 0,
+                index=columns.index(st.session_state.vessels_name_col_value) if st.session_state.vessels_name_col_value in columns else 0,
                 key="vessels_name_col"
             )
             
-            vessels_owner_col = st.selectbox(
+            st.selectbox(
                 "Vessel Owner Column", 
                 options=columns,
-                index=columns.index("owner") if "owner" in columns else 0,
+                index=columns.index(st.session_state.vessels_owner_col_value) if st.session_state.vessels_owner_col_value in columns else 0,
                 key="vessels_owner_col"
             )
             
-            # Save selections to session state
-            st.session_state.vessels_name_col = vessels_name_col
-            st.session_state.vessels_owner_col = vessels_owner_col
+            # Update our values from the widget state
+            st.session_state.vessels_name_col_value = st.session_state.vessels_name_col
+            st.session_state.vessels_owner_col_value = st.session_state.vessels_owner_col
         else:
             st.info("Please upload vessels CSV data first")
 
@@ -235,15 +249,15 @@ with tab2:
                 if st.session_state.plants_data is not None:
                     plants_keywords = data_processor.extract_keywords(
                         st.session_state.plants_data,
-                        name_col=st.session_state.plants_name_col,
-                        owner_col=st.session_state.plants_owner_col
+                        name_col=st.session_state.plants_name_col_value,
+                        owner_col=st.session_state.plants_owner_col_value
                     )
                 
                 if st.session_state.vessels_data is not None:
                     vessels_keywords = data_processor.extract_keywords(
                         st.session_state.vessels_data,
-                        name_col=st.session_state.vessels_name_col,
-                        owner_col=st.session_state.vessels_owner_col
+                        name_col=st.session_state.vessels_name_col_value,
+                        owner_col=st.session_state.vessels_owner_col_value
                     )
                 
                 # Set progress display
