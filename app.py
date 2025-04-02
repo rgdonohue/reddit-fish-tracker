@@ -6,6 +6,7 @@ import time
 from data_processor import DataProcessor
 from reddit_service import RedditService
 from utils import get_timestamp, display_progress, save_to_csv
+from web_scraper import get_website_text_content
 
 # Page configuration
 st.set_page_config(
@@ -35,6 +36,22 @@ if 'total_steps' not in st.session_state:
     st.session_state.total_steps = 0
 if 'completed_steps' not in st.session_state:
     st.session_state.completed_steps = 0
+if 'reddit_client_id' not in st.session_state:
+    st.session_state.reddit_client_id = ""
+if 'reddit_client_secret' not in st.session_state:
+    st.session_state.reddit_client_secret = ""
+if 'reddit_user_agent' not in st.session_state:
+    st.session_state.reddit_user_agent = ""
+if 'subreddits' not in st.session_state:
+    st.session_state.subreddits = []
+if 'search_limit' not in st.session_state:
+    st.session_state.search_limit = 100
+if 'time_filter' not in st.session_state:
+    st.session_state.time_filter = "month"
+if 'include_comments' not in st.session_state:
+    st.session_state.include_comments = True
+if 'comments_limit' not in st.session_state:
+    st.session_state.comments_limit = 100
 
 # Title and description
 st.title("Fishing Industry Reddit Mention Monitor")
@@ -220,39 +237,40 @@ with tab2:
     # Progress indicators
     if st.session_state.search_in_progress:
         st.subheader("Search Progress")
-        progress_bar = st.progress(0)
+        
+        # Create a progress bar that updates with the progress value
+        progress_bar = st.progress(st.session_state.progress)
+        
+        # Create a container for status updates
         status_container = st.container()
         
-        # Update progress display
-        progress_bar.progress(st.session_state.progress)
-        
-        # Calculate time metrics if available
-        elapsed_time = None
-        remaining_time = None
-        total_steps_completed = 0
-        
-        if st.session_state.start_time is not None:
-            elapsed_time = time.time() - st.session_state.start_time
-            
-            if st.session_state.progress > 0:
-                total_time_estimate = elapsed_time / st.session_state.progress
-                remaining_time = total_time_estimate - elapsed_time
-        
         with status_container:
+            # Show the current task description
             st.markdown(f"**Current task:** {st.session_state.current_task}")
             
-            # Only show these metrics if we have timing data
-            if elapsed_time is not None:
+            # Calculate and display time metrics
+            if st.session_state.start_time is not None:
+                elapsed_time = time.time() - st.session_state.start_time
+                
                 col1, col2 = st.columns(2)
                 with col1:
                     st.markdown(f"**Elapsed time:** {time.strftime('%H:%M:%S', time.gmtime(elapsed_time))}")
                 
                 with col2:
-                    if remaining_time is not None and remaining_time > 0:
-                        st.markdown(f"**Estimated time left:** {time.strftime('%H:%M:%S', time.gmtime(remaining_time))}")
+                    if st.session_state.progress > 0:
+                        # Estimate remaining time based on progress so far
+                        total_time_estimate = elapsed_time / st.session_state.progress
+                        remaining_time = total_time_estimate - elapsed_time
+                        if remaining_time > 0:
+                            st.markdown(f"**Estimated time left:** {time.strftime('%H:%M:%S', time.gmtime(remaining_time))}")
             
+            # Show step counting progress if available
             if st.session_state.completed_steps > 0 and st.session_state.total_steps > 0:
                 st.markdown(f"**Progress:** {st.session_state.completed_steps} of {st.session_state.total_steps} steps completed")
+    
+    # Setup for searching
+    if 'do_search' not in st.session_state:
+        st.session_state.do_search = False
     
     # Handle search button click
     if search_button:
@@ -264,120 +282,144 @@ with tab2:
         elif st.session_state.plants_data is None and st.session_state.vessels_data is None:
             st.error("You must upload at least one CSV file")
         else:
-            with st.spinner("Processing data and searching Reddit..."):
-                st.session_state.search_in_progress = True
-                
-                # Initialize services
-                data_processor = DataProcessor()
+            # Store search parameters in session state
+            st.session_state.reddit_client_id = reddit_client_id
+            st.session_state.reddit_client_secret = reddit_client_secret
+            st.session_state.reddit_user_agent = reddit_user_agent
+            st.session_state.subreddits = subreddits
+            st.session_state.search_limit = search_limit
+            st.session_state.time_filter = time_filter
+            st.session_state.include_comments = include_comments
+            st.session_state.comments_limit = comments_limit
+            
+            # Set search flag and trigger rerun
+            st.session_state.search_in_progress = True
+            st.session_state.do_search = True
+            st.rerun()
+    
+    # Execute search if flag is set
+    if st.session_state.do_search:
+        st.session_state.do_search = False  # Reset flag
+        
+        with st.spinner("Processing data and searching Reddit..."):
+            # Initialize services
+            data_processor = DataProcessor()
+            
+            # Initialize Reddit service with stored credentials
+            try:
                 reddit_service = RedditService(
-                    client_id=reddit_client_id,
-                    client_secret=reddit_client_secret,
-                    user_agent=reddit_user_agent
+                    client_id=st.session_state.reddit_client_id,
+                    client_secret=st.session_state.reddit_client_secret,
+                    user_agent=st.session_state.reddit_user_agent
                 )
+            except Exception as e:
+                st.error(f"Error connecting to Reddit API: {str(e)}")
+                # Reset search state
+                st.session_state.search_in_progress = False
+                st.rerun()  # Rerun to update UI
+            
+            # Process keywords
+            plants_keywords = []
+            vessels_keywords = []
+            
+            if st.session_state.plants_data is not None:
+                plants_keywords = data_processor.extract_keywords(
+                    st.session_state.plants_data,
+                    name_col=st.session_state.plants_name_col_value,
+                    owner_col=st.session_state.plants_owner_col_value
+                )
+            
+            if st.session_state.vessels_data is not None:
+                vessels_keywords = data_processor.extract_keywords(
+                    st.session_state.vessels_data,
+                    name_col=st.session_state.vessels_name_col_value,
+                    owner_col=st.session_state.vessels_owner_col_value
+                )
+            
+            # Set progress display and initialize timing metrics
+            st.session_state.progress = 0
+            st.session_state.current_task = "Connecting to Reddit API..."
+            st.session_state.start_time = time.time()
+            
+            # Calculate total steps for progress tracking
+            total_subreddits = len(st.session_state.subreddits)
+            total_plant_keywords = len(plants_keywords) if plants_keywords else 0
+            total_vessel_keywords = len(vessels_keywords) if vessels_keywords else 0
+            
+            # Total steps = (subreddits × plant keywords) + (subreddits × vessel keywords)
+            st.session_state.total_steps = (total_subreddits * total_plant_keywords) + (total_subreddits * total_vessel_keywords)
+            st.session_state.completed_steps = 0
+            
+            # Progress updates for display
+            def progress_update_callback(progress, task_description):
+                st.session_state.progress = progress
+                st.session_state.current_task = task_description
                 
-                # Process keywords
-                plants_keywords = []
-                vessels_keywords = []
+                # Update step counter based on progress percentage
+                if st.session_state.total_steps > 0:
+                    st.session_state.completed_steps = int(progress * st.session_state.total_steps)
                 
-                if st.session_state.plants_data is not None:
-                    plants_keywords = data_processor.extract_keywords(
-                        st.session_state.plants_data,
-                        name_col=st.session_state.plants_name_col_value,
-                        owner_col=st.session_state.plants_owner_col_value
+                time.sleep(0.1)  # Small delay to allow UI to update
+            
+            # Perform search
+            plants_results = []
+            vessels_results = []
+            
+            try:
+                # Search for plants mentions
+                if plants_keywords:
+                    plants_results = reddit_service.search_reddit(
+                        keywords=plants_keywords,
+                        subreddits=st.session_state.subreddits,
+                        limit=st.session_state.search_limit,
+                        time_filter=st.session_state.time_filter,
+                        include_comments=st.session_state.include_comments,
+                        comments_limit=st.session_state.comments_limit,
+                        entity_type="plant",
+                        progress_callback=progress_update_callback
+                    )
+                    
+                # Search for vessels mentions
+                if vessels_keywords:
+                    vessels_results = reddit_service.search_reddit(
+                        keywords=vessels_keywords,
+                        subreddits=st.session_state.subreddits,
+                        limit=st.session_state.search_limit,
+                        time_filter=st.session_state.time_filter,
+                        include_comments=st.session_state.include_comments,
+                        comments_limit=st.session_state.comments_limit,
+                        entity_type="vessel",
+                        progress_callback=progress_update_callback
                     )
                 
-                if st.session_state.vessels_data is not None:
-                    vessels_keywords = data_processor.extract_keywords(
-                        st.session_state.vessels_data,
-                        name_col=st.session_state.vessels_name_col_value,
-                        owner_col=st.session_state.vessels_owner_col_value
-                    )
+                # Store results in session state
+                st.session_state.plants_results = plants_results
+                st.session_state.vessels_results = vessels_results
                 
-                # Set progress display and initialize timing metrics
+                # Display results count
+                st.success(f"Search completed! Found {len(plants_results)} plant mentions and {len(vessels_results)} vessel mentions.")
+                
+                # Reset search-related session state
+                st.session_state.search_in_progress = False
                 st.session_state.progress = 0
-                st.session_state.current_task = "Connecting to Reddit API..."
-                st.session_state.start_time = time.time()
-                
-                # Calculate total steps for progress tracking
-                total_subreddits = len(subreddits)
-                total_plant_keywords = len(plants_keywords) if plants_keywords else 0
-                total_vessel_keywords = len(vessels_keywords) if vessels_keywords else 0
-                
-                # Total steps = (subreddits × plant keywords) + (subreddits × vessel keywords)
-                st.session_state.total_steps = (total_subreddits * total_plant_keywords) + (total_subreddits * total_vessel_keywords)
+                st.session_state.current_task = ""
+                st.session_state.start_time = None
+                st.session_state.total_steps = 0
                 st.session_state.completed_steps = 0
                 
-                # Progress updates for display
-                def progress_update_callback(progress, task_description):
-                    st.session_state.progress = progress
-                    st.session_state.current_task = task_description
-                    
-                    # Update step counter based on progress percentage
-                    if st.session_state.total_steps > 0:
-                        st.session_state.completed_steps = int(progress * st.session_state.total_steps)
-                    
-                    time.sleep(0.1)  # Small delay to allow UI to update
+                # Switch to Results tab
+                time.sleep(1)
+                st.rerun()
                 
-                # Perform search
-                plants_results = []
-                vessels_results = []
-                
-                try:
-                    # Search for plants mentions
-                    if plants_keywords:
-                        plants_results = reddit_service.search_reddit(
-                            keywords=plants_keywords,
-                            subreddits=subreddits,
-                            limit=search_limit,
-                            time_filter=time_filter,
-                            include_comments=include_comments,
-                            comments_limit=comments_limit,
-                            entity_type="plant",
-                            progress_callback=progress_update_callback
-                        )
-                        
-                    # Search for vessels mentions
-                    if vessels_keywords:
-                        vessels_results = reddit_service.search_reddit(
-                            keywords=vessels_keywords,
-                            subreddits=subreddits,
-                            limit=search_limit,
-                            time_filter=time_filter,
-                            include_comments=include_comments,
-                            comments_limit=comments_limit,
-                            entity_type="vessel",
-                            progress_callback=progress_update_callback
-                        )
-                    
-                    # Store results in session state
-                    st.session_state.plants_results = plants_results
-                    st.session_state.vessels_results = vessels_results
-                    
-                    # Display results count
-                    st.success(f"Search completed! Found {len(plants_results)} plant mentions and {len(vessels_results)} vessel mentions.")
-                    
-                    # Automatically switch to results tab
-                    time.sleep(1)
-                    # Reset search-related session state
-                    st.session_state.search_in_progress = False
-                    st.session_state.progress = 0
-                    st.session_state.current_task = ""
-                    st.session_state.start_time = None
-                    st.session_state.total_steps = 0
-                    st.session_state.completed_steps = 0
-                    
-                    # Switch to Results tab
-                    st.rerun()
-                
-                except Exception as e:
-                    st.error(f"Error during Reddit search: {str(e)}")
-                    # Reset search-related session state
-                    st.session_state.search_in_progress = False
-                    st.session_state.progress = 0
-                    st.session_state.current_task = ""
-                    st.session_state.start_time = None
-                    st.session_state.total_steps = 0
-                    st.session_state.completed_steps = 0
+            except Exception as e:
+                st.error(f"Error during Reddit search: {str(e)}")
+                # Reset search-related session state
+                st.session_state.search_in_progress = False
+                st.session_state.progress = 0
+                st.session_state.current_task = ""
+                st.session_state.start_time = None
+                st.session_state.total_steps = 0
+                st.session_state.completed_steps = 0
 
 # Results Tab
 with tab3:
@@ -423,12 +465,30 @@ with tab3:
                         st.markdown(f"**Author:** {mention['author']}")
                         st.markdown(f"**Date/Time:** {mention['datetime']}")
                         st.markdown(f"**Subreddit:** r/{mention['subreddit']}")
-                        st.markdown(f"**Permalink:** [Link to post](https://www.reddit.com{mention['permalink']})")
+                        
+                        # Create a permalink with full URL
+                        full_url = f"https://www.reddit.com{mention['permalink']}"
+                        st.markdown(f"**Permalink:** [Link to post]({full_url})")
+                        
                         st.markdown("**Snippet:**")
                         st.markdown(f"> {mention['snippet']}")
                         
                         # Source label (post or comment)
                         st.markdown(f"**Source:** {mention['source']}")
+                        
+                        # Add a button to scrape additional content
+                        if st.button(f"Get additional content for {mention['keyword']}", key=f"scrape_plant_{i}"):
+                            try:
+                                with st.spinner("Fetching additional content..."):
+                                    scraped_content = get_website_text_content(full_url)
+                                    if scraped_content:
+                                        st.subheader("Additional Content")
+                                        st.text_area("Full Text Content", scraped_content, height=300)
+                                        st.success("Successfully retrieved additional content")
+                                    else:
+                                        st.warning("No additional content could be retrieved")
+                            except Exception as e:
+                                st.error(f"Error retrieving additional content: {str(e)}")
             else:
                 st.info("No plants mentions found in the search results.")
         
@@ -465,12 +525,30 @@ with tab3:
                         st.markdown(f"**Author:** {mention['author']}")
                         st.markdown(f"**Date/Time:** {mention['datetime']}")
                         st.markdown(f"**Subreddit:** r/{mention['subreddit']}")
-                        st.markdown(f"**Permalink:** [Link to post](https://www.reddit.com{mention['permalink']})")
+                        
+                        # Create a permalink with full URL
+                        full_url = f"https://www.reddit.com{mention['permalink']}"
+                        st.markdown(f"**Permalink:** [Link to post]({full_url})")
+                        
                         st.markdown("**Snippet:**")
                         st.markdown(f"> {mention['snippet']}")
                         
                         # Source label (post or comment)
                         st.markdown(f"**Source:** {mention['source']}")
+                        
+                        # Add a button to scrape additional content
+                        if st.button(f"Get additional content for {mention['keyword']}", key=f"scrape_vessel_{i}"):
+                            try:
+                                with st.spinner("Fetching additional content..."):
+                                    scraped_content = get_website_text_content(full_url)
+                                    if scraped_content:
+                                        st.subheader("Additional Content")
+                                        st.text_area("Full Text Content", scraped_content, height=300)
+                                        st.success("Successfully retrieved additional content")
+                                    else:
+                                        st.warning("No additional content could be retrieved")
+                            except Exception as e:
+                                st.error(f"Error retrieving additional content: {str(e)}")
             else:
                 st.info("No vessels mentions found in the search results.")
 
@@ -489,9 +567,11 @@ with st.sidebar:
     2. Configure search parameters
     3. Search Reddit for mentions
     4. View and download results
+    5. Optionally scrape additional content from links
     
     ### Tips:
     - Higher search limits may take longer but find more results
     - Reddit API has rate limits, so very large searches may be throttled
     - For best results, use specific and unique names as keywords
+    - Use the "Get additional content" buttons to scrape more details from posts
     """)
