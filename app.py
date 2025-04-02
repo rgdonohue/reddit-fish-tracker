@@ -10,7 +10,10 @@ from utils import get_timestamp, display_progress, save_to_csv
 from web_scraper import get_website_text_content
 
 # Load environment variables
-load_dotenv()
+try:
+    load_dotenv()
+except:
+    pass  # Ignore if .env file is not found, we'll use streamlit secrets instead
 
 # Initialize services
 data_processor = DataProcessor()
@@ -46,11 +49,11 @@ if 'completed_steps' not in st.session_state:
 if 'search_log' not in st.session_state:
     st.session_state.search_log = []
 if 'reddit_client_id' not in st.session_state:
-    st.session_state.reddit_client_id = os.getenv('REDDIT_CLIENT_ID', '')
+    st.session_state.reddit_client_id = st.secrets.get("REDDIT_CLIENT_ID") or os.getenv('REDDIT_CLIENT_ID', '')
 if 'reddit_client_secret' not in st.session_state:
-    st.session_state.reddit_client_secret = os.getenv('REDDIT_CLIENT_SECRET', '')
+    st.session_state.reddit_client_secret = st.secrets.get("REDDIT_CLIENT_SECRET") or os.getenv('REDDIT_CLIENT_SECRET', '')
 if 'reddit_user_agent' not in st.session_state:
-    st.session_state.reddit_user_agent = os.getenv('REDDIT_USER_AGENT', '')
+    st.session_state.reddit_user_agent = st.secrets.get("REDDIT_USER_AGENT") or os.getenv('REDDIT_USER_AGENT', '')
 if 'subreddits' not in st.session_state:
     st.session_state.subreddits = []
 if 'search_limit' not in st.session_state:
